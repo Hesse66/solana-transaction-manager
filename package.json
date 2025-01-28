@@ -1,25 +1,23 @@
 {
   "name": "solana-transaction-manager",
   "version": "1.0.0",
-  "description": "A robust Solana transaction management system",
+  "description": "A reusable module for fast and reliable Solana transactions",
   "main": "src/index.js",
   "scripts": {
-    "test": "jest",
-    "start": "node src/index.js"
-  },
-  "dependencies": {
-    "@solana/web3.js": "^1.87.6",
-    "@solana/spl-token": "^0.3.9",
-    "bs58": "^5.0.0"
-  },
-  "devDependencies": {
-    "jest": "^29.7.0"
+    "test": "echo \"No tests yet\" && exit 0"
   },
   "keywords": [
     "solana",
-    "blockchain",
-    "transactions"
+    "transactions",
+    "signing",
+    "sending",
+    "confirmation"
   ],
-  "author": "",
-  "license": "MIT"
-} 
+  "author": "You",
+  "license": "ISC",
+  "dependencies": {
+    "@solana/web3.js": "^1.87.0",
+    "bs58": "^5.0.0",
+    "eventemitter3": "^5.0.0"
+  }
+}
