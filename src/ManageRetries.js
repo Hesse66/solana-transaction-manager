@@ -1,43 +1,45 @@
+const ExecuteTransaction = require('./ExecuteTransaction');
+
+/**
+ * ManageRetries
+ *
+ * Steps:
+ *  - Check Retry Eligibility
+ *  - Wait Before Retry
+ *  - Retry Transaction Execution
+ */
 class ManageRetries {
-  constructor(options = {}) {
-    this.maxAttempts = options.maxAttempts || 3;
-    this.baseDelay = options.baseDelay || 1000;
-    this.maxDelay = options.maxDelay || 10000;
+  /**
+   * @param {Object} options
+   * @param {ExecuteTransaction} options.executeTransaction - The ExecuteTransaction instance
+   * @param {number} [options.maxRetries=3]
+   */
+  constructor({ executeTransaction, maxRetries = 3 }) {
+    this.executeTransaction = executeTransaction;
+    this.maxRetries = maxRetries;
+    this.retryCount = 0;
   }
 
-  async execute(operation, context = {}) {
-    let attempt = 0;
-    let lastError;
-
-    while (attempt < this.maxAttempts) {
-      try {
-        return await operation(context);
-      } catch (error) {
-        lastError = error;
-        attempt++;
-        
-        if (attempt === this.maxAttempts) {
-          break;
-        }
-
-        await this.sleep(this.getDelay(attempt));
-      }
+  /**
+   * manageRetries
+   * Tries the entire "executeTransaction" flow again if eligible.
+   * @param {Object} transactionData
+   */
+  async manageRetries(transactionData) {
+    // Step: Check Retry Eligibility
+    if (this.retryCount >= this.maxRetries) {
+      throw new Error('Abort: Max retry attempts reached.');
     }
 
-    throw new Error(`Failed after ${attempt} attempts. Last error: ${lastError.message}`);
-  }
+    // Step: Wait Before Retry (exponential backoff)
+    const delay = 1000 * Math.pow(2, this.retryCount); 
+    await new Promise(res => setTimeout(res, delay));
 
-  getDelay(attempt) {
-    const delay = Math.min(
-      this.maxDelay,
-      this.baseDelay * Math.pow(2, attempt - 1)
-    );
-    return delay;
-  }
-
-  sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
+    this.retryCount += 1;
+    
+    // Step: Retry Transaction Execution
+    return this.executeTransaction.runExecuteTransaction(transactionData);
   }
 }
 
-module.exports = { ManageRetries }; 
+module.exports = ManageRetries;

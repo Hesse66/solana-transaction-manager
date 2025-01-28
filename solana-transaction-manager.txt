@@ -1,0 +1,890 @@
+Below is an **example new codebase** implementing the YAML blueprint you provided. This code is organized into a self-contained module folder (as if it were a new repository) called **`solana-transaction-manager`**. Each component from the YAML is given its own file, and the workflows are implemented as orchestrations of these components.
+
+The idea is that **you can drop this folder into your existing project (or keep it in a separate repo)** and import its classes/functions wherever you need to handle Solana transactions in a reusable, abstracted manner.
+
+---
+
+## Folder Structure
+
+```
+solana-transaction-manager/
+  ├─ src/
+  │   ├─ TransactionSimulator.js
+  │   ├─ TransactionSigner.js
+  │   ├─ TransactionSender.js
+  │   ├─ TransactionConfirmer.js
+  │   ├─ TransactionRetryManager.js
+  │   ├─ FeeManager.js
+  │   ├─ ExecuteTransaction.js
+  │   ├─ ManageRetries.js
+  │   └─ index.js
+  ├─ package.json
+  ├─ README.md
+  └─ .gitignore
+```
+
+Below are the **contents** of each file.
+
+---
+
+### `package.json`
+
+```jsonc
+{
+  "name": "solana-transaction-manager",
+  "version": "1.0.0",
+  "description": "A reusable module for fast and reliable Solana transactions",
+  "main": "src/index.js",
+  "scripts": {
+    "test": "echo \"No tests yet\" && exit 0"
+  },
+  "keywords": [
+    "solana",
+    "transactions",
+    "signing",
+    "sending",
+    "confirmation"
+  ],
+  "author": "You",
+  "license": "ISC",
+  "dependencies": {
+    "@solana/web3.js": "^1.87.0",
+    "bs58": "^5.0.0",
+    "eventemitter3": "^5.0.0" // or "events", if you'd prefer Node's built-in
+  }
+}
+```
+
+> **Note**: You can adapt or omit dependencies as needed. The code below uses `@solana/web3.js` and `bs58`. It also uses a simple event emitter library (`eventemitter3`) for demonstration of internal events. If you prefer, you can use Node’s built-in `events` module.
+
+---
+
+### `README.md`
+
+```md
+# Solana Transaction Manager
+
+A reusable module for handling Solana transactions in a standardized, robust manner, featuring:
+
+- **Transaction Simulation**
+- **Transaction Signing**
+- **Transaction Sending**
+- **Transaction Confirmation**
+- **Retry Logic**
+- **Fee Management**
+
+## Installation
+
+```bash
+npm install --save solana-transaction-manager
+```
+
+*(Or if you are just dropping the folder into your codebase, you can ignore the above and import relatively.)*
+
+## Usage
+
+Below is a high-level example of using the library’s orchestrations:
+
+```js
+const {
+  ExecuteTransaction,
+  TransactionSimulator,
+  TransactionSigner,
+  TransactionSender,
+  TransactionConfirmer,
+  TransactionRetryManager,
+  FeeManager
+} = require('solana-transaction-manager');
+
+(async () => {
+  // Setup your Solana connection
+  const { Connection, Keypair } = require('@solana/web3.js');
+  const connection = new Connection('https://api.mainnet-beta.solana.com', 'confirmed');
+
+  // Setup your workflow
+  const executeTransactionWorkflow = new ExecuteTransaction({
+    simulator: new TransactionSimulator({ connection }),
+    signer: new TransactionSigner({ keypair: Keypair.generate() }), // or your own wallet
+    sender: new TransactionSender({ connection }),
+    confirmer: new TransactionConfirmer({ connection }),
+    retryManager: new TransactionRetryManager(),
+    feeManager: new FeeManager()
+  });
+
+  // Example transaction data
+  const transactionData = {
+    // your transaction details (instructions, signers, etc.)
+  };
+
+  try {
+    const result = await executeTransactionWorkflow.runExecuteTransaction(transactionData);
+    console.log('Transaction Execution Result:', result);
+  } catch (err) {
+    console.error('Execution failed:', err);
+  }
+})();
+```
+
+See the `src` folder for detailed component usage and documentation.
+```
+
+---
+
+### `.gitignore`
+
+```
+# Ignore node_modules
+node_modules/
+```
+
+---
+
+## The `src` Folder
+
+### 1. **`TransactionSimulator.js`**
+
+Implements the **TransactionSimulator** component from the YAML. It uses Solana’s `simulateTransaction` to check feasibility before actual send.
+
+```js
+const { Keypair, Transaction } = require('@solana/web3.js');
+
+/**
+ * TransactionSimulator
+ * 
+ * Responsibilities:
+ *  - Simulate transaction execution using the Solana RPC.
+ *  - Handle and report simulation results, including errors and warnings.
+ */
+class TransactionSimulator {
+  /**
+   * @param {Object} options
+   * @param {import('@solana/web3.js').Connection} options.connection
+   */
+  constructor({ connection }) {
+    this.connection = connection;
+  }
+
+  /**
+   * simulateTransaction
+   * @param {Object} transactionData - Object containing transaction details.
+   * @returns {Object} simulationResult
+   * @throws {Error} SimulationFailure
+   */
+  async simulateTransaction(transactionData) {
+    try {
+      const { transaction, signers } = transactionData;
+
+      // If the transaction is not already partially signed, do a partial sign
+      // with all signers to ensure the simulator sees correct keys.
+      const cloneTx = transaction.clone();
+      if (signers && signers.length > 0) {
+        cloneTx.sign(...signers);
+      }
+
+      // Simulate
+      const simulation = await this.connection.simulateTransaction(cloneTx);
+
+      if (simulation.value.err) {
+        throw new Error(`SimulationFailure: ${JSON.stringify(simulation.value.err)}`);
+      }
+
+      return {
+        logs: simulation.value.logs || [],
+        unitsConsumed: simulation.value.unitsConsumed,
+      };
+    } catch (err) {
+      throw new Error(`SimulationFailure: ${err.message}`);
+    }
+  }
+}
+
+module.exports = TransactionSimulator;
+```
+
+---
+
+### 2. **`TransactionSigner.js`**
+
+Implements the **TransactionSigner** component. It handles secure signing using a `Keypair` (in a real scenario you may integrate hardware wallets or other signers).
+
+```js
+const bs58 = require('bs58');
+const { Keypair } = require('@solana/web3.js');
+
+/**
+ * TransactionSigner
+ *
+ * Responsibilities:
+ *  - Sign transactions securely using private keys.
+ *  - Manage wallet credentials and ensure secure access.
+ */
+class TransactionSigner {
+  /**
+   * @param {Object} options
+   * @param {Keypair} [options.keypair] - Optional if you want to pass in Keypair directly
+   * @param {string} [options.privateKeyBase58] - Alternative to a Keypair
+   */
+  constructor({ keypair, privateKeyBase58 } = {}) {
+    if (keypair) {
+      this.keypair = keypair;
+    } else if (privateKeyBase58) {
+      const secretKey = bs58.decode(privateKeyBase58);
+      this.keypair = Keypair.fromSecretKey(secretKey);
+    } else {
+      throw new Error('TransactionSigner requires either a keypair or a privateKeyBase58');
+    }
+  }
+
+  /**
+   * signTransaction
+   * @param {Object} input
+   * @param {import('@solana/web3.js').Transaction} input.transaction - Unsigned transaction object
+   * @returns {import('@solana/web3.js').Transaction} signedTransaction
+   * @throws {Error} SigningFailure
+   */
+  signTransaction({ transaction }) {
+    try {
+      transaction.sign(this.keypair);
+      return transaction;
+    } catch (err) {
+      throw new Error(`SigningFailure: ${err.message}`);
+    }
+  }
+}
+
+module.exports = TransactionSigner;
+```
+
+---
+
+### 3. **`TransactionSender.js`**
+
+Implements the **TransactionSender** component. Responsible for sending the signed transaction to the network.
+
+```js
+/**
+ * TransactionSender
+ *
+ * Responsibilities:
+ *  - Transmit signed transactions to the specified RPC endpoint.
+ *  - Handle network-related errors and retries.
+ */
+class TransactionSender {
+  /**
+   * @param {Object} options
+   * @param {import('@solana/web3.js').Connection} options.connection
+   */
+  constructor({ connection }) {
+    this.connection = connection;
+  }
+
+  /**
+   * sendTransaction
+   * @param {Object} input
+   * @param {import('@solana/web3.js').Transaction} input.signedTransaction - Signed transaction object
+   * @returns {string} transactionSignature
+   * @throws {Error} NetworkError | RateLimitExceeded
+   */
+  async sendTransaction({ signedTransaction }) {
+    try {
+      // Adjust sendOptions as needed for your environment
+      const signature = await this.connection.sendRawTransaction(
+        signedTransaction.serialize(),
+        {
+          skipPreflight: false, // or true, depends on your preference
+          preflightCommitment: 'processed', 
+          maxRetries: 3
+        }
+      );
+      return signature;
+    } catch (err) {
+      // Check for rate limit
+      if (err.message.includes('429')) {
+        throw new Error('RateLimitExceeded: RPC rate limit surpassed.');
+      }
+      throw new Error(`NetworkError: ${err.message}`);
+    }
+  }
+}
+
+module.exports = TransactionSender;
+```
+
+---
+
+### 4. **`TransactionConfirmer.js`**
+
+Implements the **TransactionConfirmer** component. Subscribes (or polls) for transaction status until confirmed or timeouts.
+
+```js
+const EventEmitter = require('eventemitter3');
+
+/**
+ * TransactionConfirmer
+ *
+ * Responsibilities:
+ *  - Subscribe to transaction status updates.
+ *  - Confirm transaction finality based on specified commitment levels.
+ */
+class TransactionConfirmer extends EventEmitter {
+  /**
+   * @param {Object} options
+   * @param {import('@solana/web3.js').Connection} options.connection
+   * @param {string} [options.commitment='confirmed'] - e.g. 'processed', 'confirmed', 'finalized'
+   */
+  constructor({ connection, commitment = 'confirmed' }) {
+    super();
+    this.connection = connection;
+    this.commitment = commitment;
+  }
+
+  /**
+   * confirmTransaction
+   * @param {Object} input
+   * @param {string} input.transactionSignature - The signature to confirm.
+   * @returns {Promise<string>} confirmationStatus
+   * @throws {Error} ConfirmationTimeout | ConfirmationFailure
+   */
+  async confirmTransaction({ transactionSignature }) {
+    return new Promise((resolve, reject) => {
+      let done = false;
+      const timeoutMs = 60000; // 1 minute, adjustable
+      const start = Date.now();
+
+      // Start subscription
+      const subscriptionId = this.connection.onSignature(
+        transactionSignature,
+        (result) => {
+          if (done) return;
+          done = true;
+          this.connection.removeSignatureListener(subscriptionId);
+
+          if (result.err) {
+            reject(new Error(`ConfirmationFailure: ${JSON.stringify(result.err)}`));
+          } else {
+            resolve('confirmed');
+          }
+        },
+        this.commitment
+      );
+
+      // Fallback: poll / or a standard confirm approach
+      const pollInterval = setInterval(async () => {
+        if (Date.now() - start > timeoutMs) {
+          clearInterval(pollInterval);
+          if (!done) {
+            done = true;
+            this.connection.removeSignatureListener(subscriptionId);
+            reject(new Error(`ConfirmationTimeout: Transaction not confirmed in time.`));
+          }
+        }
+      }, 2000);
+    });
+  }
+}
+
+module.exports = TransactionConfirmer;
+```
+
+---
+
+### 5. **`TransactionRetryManager.js`**
+
+Implements the **TransactionRetryManager** component. You can expand or plug in advanced logic (exponential backoff, etc.). For now, this is a minimal example.
+
+```js
+/**
+ * TransactionRetryManager
+ *
+ * Responsibilities:
+ *  - Implement retry logic with exponential backoff.
+ *  - Manage the maximum number of retry attempts.
+ */
+class TransactionRetryManager {
+  /**
+   * @param {Object} [options]
+   * @param {number} [options.maxRetries=3] - Maximum number of retry attempts
+   * @param {number} [options.initialDelayMs=1000]
+   * @param {number} [options.maxDelayMs=8000]
+   */
+  constructor({ maxRetries = 3, initialDelayMs = 1000, maxDelayMs = 8000 } = {}) {
+    this.maxRetries = maxRetries;
+    this.initialDelayMs = initialDelayMs;
+    this.maxDelayMs = maxDelayMs;
+  }
+
+  /**
+   * retryTransaction
+   * @param {Object} input
+   * @param {Function} input.executeFn - Function that attempts the transaction steps
+   * @param {Object} input.transactionData - Original transaction data to pass
+   * @returns {Promise<Object>} retryResult
+   * @throws {Error} MaxRetriesExceeded
+   */
+  async retryTransaction({ executeFn, transactionData }) {
+    let attempt = 0;
+    let delay = this.initialDelayMs;
+
+    while (attempt < this.maxRetries) {
+      try {
+        attempt++;
+        return await executeFn(transactionData);
+      } catch (err) {
+        // If last attempt, throw
+        if (attempt >= this.maxRetries) {
+          throw new Error(`MaxRetriesExceeded: ${err.message}`);
+        }
+        // Otherwise wait with exponential backoff
+        await this._wait(delay);
+        delay = Math.min(delay * 2, this.maxDelayMs);
+      }
+    }
+  }
+
+  async _wait(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+}
+
+module.exports = TransactionRetryManager;
+```
+
+---
+
+### 6. **`FeeManager.js`**
+
+Implements the **FeeManager** component. This is a simple example showing how you might compute or modify fees based on “network conditions.”
+
+```js
+/**
+ * FeeManager
+ *
+ * Responsibilities:
+ *  - Calculate and set appropriate priority fees based on network conditions.
+ *  - Adjust fees dynamically to ensure transactions are processed promptly.
+ */
+class FeeManager {
+  constructor() {
+    // In a real scenario, you might keep track of historical data,
+    // or consult an external API for current network congestion.
+  }
+
+  /**
+   * calculatePriorityFee
+   * @param {Object} input
+   * @param {any} input.networkConditions - Current state of the Solana network
+   * @returns {number} priorityFee
+   * @throws {Error} FeeCalculationError
+   */
+  calculatePriorityFee({ networkConditions }) {
+    try {
+      // Example: basic calculation
+      // Suppose if network is congested, we up the fee by some factor
+      const { congested } = networkConditions || {};
+      if (congested) {
+        return 0.002; // 0.002 SOL
+      }
+      return 0.0005; // default 0.0005 SOL
+    } catch (err) {
+      throw new Error(`FeeCalculationError: ${err.message}`);
+    }
+  }
+}
+
+module.exports = FeeManager;
+```
+
+---
+
+### 7. **`ExecuteTransaction.js`**
+
+Implements the **ExecuteTransaction** workflow from the YAML. It orchestrates:
+1. Simulate
+2. Sign
+3. Send
+4. Confirm
+5. Handle Failures (retry logic, logging, etc.)
+
+```js
+/**
+ * ExecuteTransaction
+ *
+ * Steps (from YAML):
+ *  1. Simulate Transaction
+ *  2. Sign Transaction
+ *  3. Send Transaction
+ *  4. Confirm Transaction
+ *  5. Finalize
+ */
+class ExecuteTransaction {
+  /**
+   * @param {Object} options
+   * @param {import('./TransactionSimulator')} options.simulator
+   * @param {import('./TransactionSigner')} options.signer
+   * @param {import('./TransactionSender')} options.sender
+   * @param {import('./TransactionConfirmer')} options.confirmer
+   * @param {import('./TransactionRetryManager')} options.retryManager
+   * @param {import('./FeeManager')} options.feeManager
+   */
+  constructor({ simulator, signer, sender, confirmer, retryManager, feeManager }) {
+    this.simulator = simulator;
+    this.signer = signer;
+    this.sender = sender;
+    this.confirmer = confirmer;
+    this.retryManager = retryManager;
+    this.feeManager = feeManager;
+  }
+
+  /**
+   * runExecuteTransaction
+   * End-to-end workflow for executing a transaction
+   * @param {Object} transactionData
+   * @returns {Promise<{ signature: string; confirmationStatus: string }>}
+   */
+  async runExecuteTransaction(transactionData) {
+    // 1. Simulate Transaction
+    try {
+      await this.simulator.simulateTransaction(transactionData);
+    } catch (err) {
+      throw new Error(`Simulation failed: ${err.message}`);
+    }
+
+    // 2. Sign Transaction
+    let signedTx;
+    try {
+      signedTx = this.signer.signTransaction({ transaction: transactionData.transaction });
+    } catch (err) {
+      throw new Error(`Signing failed: ${err.message}`);
+    }
+
+    // 3 & 4. Send & Confirm with potential retries
+    const sendAndConfirm = async (txData) => {
+      // Send
+      let txSignature = await this.sender.sendTransaction({ signedTransaction: signedTx });
+
+      // Confirm
+      let confirmationStatus = await this.confirmer.confirmTransaction({
+        transactionSignature: txSignature,
+      });
+
+      return { signature: txSignature, confirmationStatus };
+    };
+
+    try {
+      // Attempt to send & confirm, retrying on failure (network or confirmation)
+      return await this.retryManager.retryTransaction({
+        executeFn: sendAndConfirm,
+        transactionData
+      });
+    } catch (err) {
+      // If we fail here, we've exhausted retries
+      throw new Error(`Transaction execution failed after retries: ${err.message}`);
+    }
+  }
+}
+
+module.exports = ExecuteTransaction;
+```
+
+---
+
+### 8. **`ManageRetries.js`**
+
+Implements the **ManageRetries** workflow. It demonstrates how you’d handle repeated failures with exponential backoff. This is just a simple flow that checks if the maximum has been reached, then calls `ExecuteTransaction` again.
+
+```js
+const ExecuteTransaction = require('./ExecuteTransaction');
+
+/**
+ * ManageRetries
+ *
+ * Steps:
+ *  - Check Retry Eligibility
+ *  - Wait Before Retry
+ *  - Retry Transaction Execution
+ */
+class ManageRetries {
+  /**
+   * @param {Object} options
+   * @param {ExecuteTransaction} options.executeTransaction - The ExecuteTransaction instance
+   * @param {number} [options.maxRetries=3]
+   */
+  constructor({ executeTransaction, maxRetries = 3 }) {
+    this.executeTransaction = executeTransaction;
+    this.maxRetries = maxRetries;
+    this.retryCount = 0;
+  }
+
+  /**
+   * manageRetries
+   * Tries the entire "executeTransaction" flow again if eligible.
+   * @param {Object} transactionData
+   */
+  async manageRetries(transactionData) {
+    // Step: Check Retry Eligibility
+    if (this.retryCount >= this.maxRetries) {
+      throw new Error('Abort: Max retry attempts reached.');
+    }
+
+    // Step: Wait Before Retry (exponential backoff)
+    const delay = 1000 * Math.pow(2, this.retryCount); 
+    await new Promise(res => setTimeout(res, delay));
+
+    this.retryCount += 1;
+    
+    // Step: Retry Transaction Execution
+    return this.executeTransaction.runExecuteTransaction(transactionData);
+  }
+}
+
+module.exports = ManageRetries;
+```
+
+> **Note**: This class is purely illustrative. In practice, you might unify this logic with `TransactionRetryManager`. You can also nest the entire workflow’s steps (simulate, sign, etc.) within your own retry structure. The blueprint gave us two layers of “retry logic,” so consider whether you want them separate or combined.
+
+---
+
+### 9. **`index.js`**
+
+A convenience file that re-exports all modules. Makes importing easier.
+
+```js
+module.exports = {
+  TransactionSimulator: require('./TransactionSimulator'),
+  TransactionSigner: require('./TransactionSigner'),
+  TransactionSender: require('./TransactionSender'),
+  TransactionConfirmer: require('./TransactionConfirmer'),
+  TransactionRetryManager: require('./TransactionRetryManager'),
+  FeeManager: require('./FeeManager'),
+  ExecuteTransaction: require('./ExecuteTransaction'),
+  ManageRetries: require('./ManageRetries')
+};
+```
+
+---
+
+## Integration Example with Existing Code
+
+If you want to integrate this **`solana-transaction-manager`** module into your existing codebase (e.g., `simple_volume_bot.js` or others), you might do something like:
+
+```js
+// In your existing file, e.g. simple_volume_bot.js
+const {
+  TransactionSimulator,
+  TransactionSigner,
+  TransactionSender,
+  TransactionConfirmer,
+  TransactionRetryManager,
+  FeeManager,
+  ExecuteTransaction
+} = require('./solana-transaction-manager/src'); // or wherever you place it
+
+// Then, in your constructor or setup:
+const { Connection, Keypair } = require('@solana/web3.js');
+this.connection = new Connection(this.config.rpcEndpoint, 'confirmed');
+this.mainKeypair = Keypair.fromSecretKey(bs58.decode(this.config.privateKey));
+
+this.txSimulator = new TransactionSimulator({ connection: this.connection });
+this.txSigner = new TransactionSigner({ keypair: this.mainKeypair });
+this.txSender = new TransactionSender({ connection: this.connection });
+this.txConfirmer = new TransactionConfirmer({ connection: this.connection, commitment: 'confirmed' });
+this.txRetryManager = new TransactionRetryManager({ maxRetries: 3 });
+this.feeManager = new FeeManager();
+
+this.executeTransactionWorkflow = new ExecuteTransaction({
+  simulator: this.txSimulator,
+  signer: this.txSigner,
+  sender: this.txSender,
+  confirmer: this.txConfirmer,
+  retryManager: this.txRetryManager,
+  feeManager: this.feeManager
+});
+
+// Later, inside a method you can do:
+const transactionData = {
+  transaction: <someSolanaTransaction>, // your built transaction
+  signers: [this.mainKeypair], // optional
+};
+
+try {
+  const { signature, confirmationStatus } =
+    await this.executeTransactionWorkflow.runExecuteTransaction(transactionData);
+  console.log('Transaction signature:', signature);
+  console.log('Confirmation status:', confirmationStatus);
+} catch (err) {
+  console.error('Failed to execute transaction:', err.message);
+}
+```
+
+This gives you a **reusable** architecture for simulation, signing, sending, confirming, and retrying *without* cluttering each piece of your existing code.
+
+---
+
+## Summary
+
+This **modular codebase** follows the YAML blueprint:
+- **Components**: `TransactionSimulator`, `TransactionSigner`, `TransactionSender`, `TransactionConfirmer`, `TransactionRetryManager`, `FeeManager`.
+- **Workflows**: `ExecuteTransaction` (covers simulation \> signing \> sending \> confirmation \> finalization) and a sample `ManageRetries` for a larger scope of retry logic.
+- **Failure Boundaries**: Each module throws specific errors (simulation, signing, network, rate limits, confirmation timeouts, etc.).
+- **Decision Rules**: 
+  - No further steps if simulation fails  
+  - Priority fee can be dynamically set via `FeeManager`  
+  - Maximum retries enforced by `TransactionRetryManager`  
+  - Logging handled by thrown errors or your own logging system  
+
+Feel free to adjust or expand each class to fit your real environment (e.g., handle hardware wallets, advanced fee calculations, robust confirmations, etc.). 
+
+You now have a **standalone “transaction management” module** you can import into any Solana-based application. Enjoy!
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+---
+---
+---
+
+
+
+
+
+
+
+**Yes, it’s actually quite straightforward to turn this folder into a reusable Node library, publish it, and then install it across all your Solana projects using `npm install`.** Below is a high-level guide:
+
+---
+
+## 1. Put the Code in Its Own Repository
+
+1. Create a new GitHub (or GitLab, or Bitbucket) repository named something like `solana-transaction-manager`.
+2. Place **all the library files** (the `package.json`, your `/src` directory, etc.) into that repo.
+3. Make sure you have a `.gitignore` that ignores `node_modules/`.
+4. Commit and push the code to your chosen Git hosting platform.
+
+---
+
+## 2. Add the Necessary Fields to `package.json`
+
+Ensure your `package.json` has:
+```jsonc
+{
+  "name": "solana-transaction-manager", // or whatever you choose
+  "version": "1.0.0",
+  "description": "A reusable module for fast and reliable Solana transactions",
+  "main": "src/index.js",
+  // ...
+  "publishConfig": {
+    "access": "public"
+  }
+}
+```
+
+If you plan to **publish publicly** on the public npm registry, you can set `"access": "public"`.  
+If you want this to be private, you’d omit that or set up a private registry.
+
+---
+
+## 3. Publish to npm (Public or Private)
+
+### **Public npm**
+
+1. Make sure you are registered (and signed in) on npm:  
+   ```bash
+   npm login
+   ```
+2. Publish the package:
+   ```bash
+   npm publish
+   ```
+3. Once published, anyone can install it via:
+   ```bash
+   npm install solana-transaction-manager
+   ```
+   
+### **Private npm**
+
+If you need to keep the code proprietary, you’d host it in a **private npm registry** (for example, a **GitHub Package Registry** or something like **Artifactory**):
+1. Configure your `~/.npmrc` (your local npm config) to point to your private registry.
+2. Use `npm publish --registry <private-registry-url>` to publish there.
+3. Then in your other projects, do:
+   ```bash
+   npm install solana-transaction-manager --registry <private-registry-url>
+   ```
+
+---
+
+## 4. Use It in Your Projects
+
+In whichever Solana project you need the library, just install and import it:
+
+```bash
+npm install solana-transaction-manager
+```
+
+Then in your code:
+
+```js
+const {
+  ExecuteTransaction,
+  TransactionSimulator,
+  TransactionSigner,
+  // etc.
+} = require('solana-transaction-manager');
+```
+
+And you’re off to the races.
+
+---
+
+### Alternative: Direct GitHub Installation
+
+If you don’t want to publish to npm at all, you can **install directly from a Git URL**:
+
+```bash
+npm install git+https://github.com/<your-username>/solana-transaction-manager.git
+```
+
+Then `package.json` will show something like:
+
+```json
+{
+  "dependencies": {
+    "solana-transaction-manager": "github:<your-username>/solana-transaction-manager"
+  }
+}
+```
+
+You can still `require('solana-transaction-manager')` as normal. This is an easy way if you don’t need the overhead of npm publishing.
+
+---
+
+## In Summary
+
+1. **Extract** the `solana-transaction-manager` folder (the code we wrote) into its own Git repo.  
+2. **Add** a properly configured `package.json`.  
+3. **Publish** it either to [public npm](https://www.npmjs.com/) or to your own private registry / GitHub Packages.  
+4. **Install** it with `npm install your-package-name` in all your other Solana projects.  
+
+This is generally **the easiest and most common** way to share a Node-based library across multiple codebases.

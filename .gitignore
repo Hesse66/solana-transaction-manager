@@ -1,8 +1,2 @@
-monoprompting_test/
+# Ignore node_modules
 node_modules/
-.env
-.DS_Store
-coverage/
-dist/
-build/
-*.log 

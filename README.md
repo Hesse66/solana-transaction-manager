@@ -1,47 +1,61 @@
 # Solana Transaction Manager
 
-A robust transaction management system for Solana blockchain, providing simulation, signing, sending, and confirmation capabilities.
+A reusable module for handling Solana transactions in a standardized, robust manner, featuring:
 
-## Features
-
-- Transaction simulation before sending
-- Transaction signing with multiple signers support
-- Reliable transaction sending with retry mechanisms
-- Transaction confirmation tracking
-- Fee management and optimization
-- Automatic retry handling for failed transactions
+- **Transaction Simulation**
+- **Transaction Signing**
+- **Transaction Sending**
+- **Transaction Confirmation**
+- **Retry Logic**
+- **Fee Management**
 
 ## Installation
 
 ```bash
-npm install solana-transaction-manager
+npm install --save solana-transaction-manager
 ```
+
+*(Or if you are just dropping the folder into your codebase, you can ignore the above and import relatively.)*
 
 ## Usage
 
-```javascript
-const { ExecuteTransaction } = require('solana-transaction-manager');
+Below is a high-level example of using the library’s orchestrations:
 
-const executeTransaction = new ExecuteTransaction({
-  connection,
-  wallet
-});
+```js
+const {
+  ExecuteTransaction,
+  TransactionSimulator,
+  TransactionSigner,
+  TransactionSender,
+  TransactionConfirmer,
+  TransactionRetryManager,
+  FeeManager
+} = require('solana-transaction-manager');
 
-// Execute a transaction with full lifecycle management
-const result = await executeTransaction.execute(transaction, {
-  simulate: true,
-  maxRetries: 3,
-  confirmationStrategy: 'fast'
-});
-```
+(async () => {
+  // Setup your Solana connection
+  const { Connection, Keypair } = require('@solana/web3.js');
+  const connection = new Connection('https://api.mainnet-beta.solana.com', 'confirmed');
 
-## Documentation
+  // Setup your workflow
+  const executeTransactionWorkflow = new ExecuteTransaction({
+    simulator: new TransactionSimulator({ connection }),
+    signer: new TransactionSigner({ keypair: Keypair.generate() }), // or your own wallet
+    sender: new TransactionSender({ connection }),
+    confirmer: new TransactionConfirmer({ connection }),
+    retryManager: new TransactionRetryManager(),
+    feeManager: new FeeManager()
+  });
 
-See individual module documentation for detailed usage:
+  // Example transaction data
+  const transactionData = {
+    // your transaction details (instructions, signers, etc.)
+  };
 
-- TransactionSimulator
-- TransactionSigner
-- TransactionSender
-- TransactionConfirmer
-- TransactionRetryManager
-- FeeManager 
+  try {
+    const result = await executeTransactionWorkflow.runExecuteTransaction(transactionData);
+    console.log('Transaction Execution Result:', result);
+  } catch (err) {
+    console.error('Execution failed:', err);
+  }
+})();
