@@ -9,25 +9,27 @@ class TransactionSender {
   /**
    * @param {Object} options
    * @param {import('@solana/web3.js').Connection} options.connection
+   * @param {boolean} [options.skipPreflight=false] - Skip transaction simulation
    */
-  constructor({ connection }) {
+  constructor({ connection, skipPreflight = false }) {
     this.connection = connection;
+    this.skipPreflight = skipPreflight;
   }
 
   /**
    * sendTransaction
    * @param {Object} input
    * @param {import('@solana/web3.js').Transaction} input.signedTransaction - Signed transaction object
+   * @param {boolean} [input.skipPreflight] - Override default skipPreflight setting
    * @returns {string} transactionSignature
    * @throws {Error} NetworkError | RateLimitExceeded
    */
-  async sendTransaction({ signedTransaction }) {
+  async sendTransaction({ signedTransaction, skipPreflight }) {
     try {
-      // Adjust sendOptions as needed for your environment
       const signature = await this.connection.sendRawTransaction(
         signedTransaction.serialize(),
         {
-          skipPreflight: false, // or true, depends on your preference
+          skipPreflight: skipPreflight ?? this.skipPreflight,
           preflightCommitment: 'processed', 
           maxRetries: 3
         }
