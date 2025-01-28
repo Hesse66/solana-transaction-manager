@@ -1,0 +1,8 @@
+monoprompting_test/
+node_modules/
+.env
+.DS_Store
+coverage/
+dist/
+build/
+*.log 
